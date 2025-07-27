@@ -59,21 +59,58 @@ class PCInfoApp(ctk.CTk):
             self.destroy()  # Close the window if there's no internet connection
             return
 
-        # Create top frame for menu buttons
-        self.menu_frame = ctk.CTkFrame(self)
-        self.menu_frame.pack(fill="x", padx=10, pady=5)
+        # Create menu bar frame
+        self.menu_bar = ctk.CTkFrame(self, height=40)
+        self.menu_bar.pack(fill="x", padx=0, pady=0)
+        self.menu_bar.pack_propagate(False)
 
-        # Create menu buttons
-        self.exit_button = ctk.CTkButton(self.menu_frame, text="Exit", command=self.destroy, width=80)
-        self.exit_button.pack(side="left", padx=5)
-        
-        self.settings_button = ctk.CTkButton(self.menu_frame, text="Change Update Interval", 
-                                           command=self.change_update_interval, width=150)
-        self.settings_button.pack(side="left", padx=5)
-        
-        self.refresh_button = ctk.CTkButton(self.menu_frame, text="Refresh Now", 
-                                          command=self.manual_refresh, width=100)
-        self.refresh_button.pack(side="left", padx=5)
+        # File Menu
+        self.file_menu_button = ctk.CTkOptionMenu(
+            self.menu_bar, 
+            values=["Exit"],
+            command=self.file_menu_callback,
+            width=60,
+            height=30
+        )
+        self.file_menu_button.pack(side="left", padx=5, pady=5)
+        self.file_menu_button.set("File")
+
+        # View Menu
+        self.view_menu_button = ctk.CTkOptionMenu(
+            self.menu_bar,
+            values=["System Info", "Processes", "Refresh Now"],
+            command=self.view_menu_callback,
+            width=60,
+            height=30
+        )
+        self.view_menu_button.pack(side="left", padx=5, pady=5)
+        self.view_menu_button.set("View")
+
+        # Settings Menu
+        self.settings_menu_button = ctk.CTkOptionMenu(
+            self.menu_bar,
+            values=["Change Update Interval", "Theme: Dark", "Theme: Light", "Theme: System"],
+            command=self.settings_menu_callback,
+            width=80,
+            height=30
+        )
+        self.settings_menu_button.pack(side="left", padx=5, pady=5)
+        self.settings_menu_button.set("Settings")
+
+        # Help Menu
+        self.help_menu_button = ctk.CTkOptionMenu(
+            self.menu_bar,
+            values=["About"],
+            command=self.help_menu_callback,
+            width=60,
+            height=30
+        )
+        self.help_menu_button.pack(side="left", padx=5, pady=5)
+        self.help_menu_button.set("Help")
+
+        # Status label on the right side
+        self.status_label = ctk.CTkLabel(self.menu_bar, text="Ready")
+        self.status_label.pack(side="right", padx=10, pady=5)
 
         # Create tabview for organizing content
         self.tabview = ctk.CTkTabview(self, width=780, height=500)
@@ -128,6 +165,58 @@ class PCInfoApp(ctk.CTk):
         except requests.ConnectionError:
             return False
 
+    # Menu callback functions
+    def file_menu_callback(self, choice):
+        if choice == "Exit":
+            self.destroy()
+        # Reset the menu to show "File" again
+        self.file_menu_button.set("File")
+
+    def view_menu_callback(self, choice):
+        if choice == "System Info":
+            self.tabview.set("System Info")
+        elif choice == "Processes":
+            self.tabview.set("Processes")
+        elif choice == "Refresh Now":
+            self.manual_refresh()
+            self.status_label.configure(text="Refreshed")
+            self.after(2000, lambda: self.status_label.configure(text="Ready"))
+        # Reset the menu to show "View" again
+        self.view_menu_button.set("View")
+
+    def settings_menu_callback(self, choice):
+        if choice == "Change Update Interval":
+            self.change_update_interval()
+        elif choice == "Theme: Dark":
+            ctk.set_appearance_mode("dark")
+            self.status_label.configure(text="Theme changed to Dark")
+            self.after(2000, lambda: self.status_label.configure(text="Ready"))
+        elif choice == "Theme: Light":
+            ctk.set_appearance_mode("light")
+            self.status_label.configure(text="Theme changed to Light")
+            self.after(2000, lambda: self.status_label.configure(text="Ready"))
+        elif choice == "Theme: System":
+            ctk.set_appearance_mode("system")
+            self.status_label.configure(text="Theme changed to System")
+            self.after(2000, lambda: self.status_label.configure(text="Ready"))
+        # Reset the menu to show "Settings" again
+        self.settings_menu_button.set("Settings")
+
+    def help_menu_callback(self, choice):
+        if choice == "About":
+            messagebox.showinfo("About PC Info", 
+                              "PC Info v2.0\n"
+                              "A system information tool\n"
+                              "Built with CustomTkinter\n\n"
+                              "Features:\n"
+                              "• System Hardware Information\n"
+                              "• GPU Information\n"
+                              "• Process Monitoring\n"
+                              "• Real-time Updates\n"
+                              "• Modern Dark/Light Themes")
+        # Reset the menu to show "Help" again
+        self.help_menu_button.set("Help")
+
     # Switch to hardware information tab
     def switch_to_hardware(self):
         self.tabview.set("System Info")
@@ -141,24 +230,36 @@ class PCInfoApp(ctk.CTk):
         new_interval = simpledialog.askinteger("Change Update Interval", "Enter the new update interval (seconds):", parent=self)
         if new_interval is not None and new_interval > 0:
             self.update_interval = new_interval
+            self.status_label.configure(text=f"Update interval: {new_interval}s")
+            self.after(3000, lambda: self.status_label.configure(text="Ready"))
             messagebox.showinfo("Success", f"Update interval set to {new_interval} seconds.")
         elif new_interval is not None:
             messagebox.showerror("Error", "Update interval must be a positive integer.")
 
     # Manual refresh method
     def manual_refresh(self):
+        self.status_label.configure(text="Updating...")
         self.system_info = get_system_info()
         self.display_system_info()
         self.display_gpu_info()
         self.display_processes()
+        self.status_label.configure(text="Updated")
+        self.after(2000, lambda: self.status_label.configure(text="Ready"))
 
     # Update information in another thread
     def update_information_threaded(self):
         while True:
-            self.system_info = get_system_info()
-            self.display_system_info()
-            self.display_gpu_info()
-            self.display_processes()
+            try:
+                self.system_info = get_system_info()
+                self.display_system_info()
+                self.display_gpu_info()
+                self.display_processes()
+                # Update status periodically to show it's working
+                if hasattr(self, 'status_label'):
+                    self.after(0, lambda: self.status_label.configure(text="Auto-updated"))
+                    self.after(1000, lambda: self.status_label.configure(text="Ready"))
+            except Exception as e:
+                logger.error(f"Error in update thread: {e}")
             time.sleep(self.update_interval)
 
     def display_system_info(self):
