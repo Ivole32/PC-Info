@@ -129,12 +129,21 @@ class PCInfoApp(ctk.CTk):
         self.tree_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
         # Create treeview to display processes
-        self.processes_tree = ttk.Treeview(self.tree_frame, columns=("pid", "name", "cpu_percent", "memory_percent"))
+        self.processes_tree = ttk.Treeview(self.tree_frame, columns=("name", "cpu_percent", "memory_percent"))
         self.processes_tree.heading("#0", text="PID")
-        self.processes_tree.heading("pid", text="PID")
-        self.processes_tree.heading("name", text="Name")
-        self.processes_tree.heading("cpu_percent", text="CPU %")
+        self.processes_tree.heading("name", text="Process Name")
+        self.processes_tree.heading("cpu_percent", text="CPU Usage %")
         self.processes_tree.heading("memory_percent", text="Memory %")
+        
+        # Improved column widths for better readability
+        self.processes_tree.column("#0", width=80, minwidth=60)
+        self.processes_tree.column("name", width=300, minwidth=200)
+        self.processes_tree.column("cpu_percent", width=120, minwidth=100)
+        self.processes_tree.column("memory_percent", width=120, minwidth=100)
+        
+        # Style the treeview for dark theme
+        self.setup_treeview_style()
+        
         self.processes_tree.pack(fill="both", expand=True, padx=5, pady=5)
 
         # Load system information
@@ -165,6 +174,65 @@ class PCInfoApp(ctk.CTk):
         except requests.ConnectionError:
             return False
 
+    # Setup treeview style for better theme integration
+    def setup_treeview_style(self):
+        style = ttk.Style()
+        
+        # Configure colors based on current appearance mode
+        current_mode = ctk.get_appearance_mode()
+        
+        if current_mode == "Dark":
+            # Dark theme colors
+            bg_color = "#212121"
+            fg_color = "#ffffff"
+            select_bg = "#1f538d"
+            select_fg = "#ffffff"
+            field_bg = "#2b2b2b"
+            heading_bg = "#2b2b2b"
+        else:
+            # Light theme colors
+            bg_color = "#ffffff"
+            fg_color = "#000000"
+            select_bg = "#0078d4"
+            select_fg = "#ffffff"
+            field_bg = "#f0f0f0"
+            heading_bg = "#e1e1e1"
+        
+        # Configure treeview style with better readability
+        style.theme_use('clam')
+        style.configure("Treeview",
+                       background=bg_color,
+                       foreground=fg_color,
+                       fieldbackground=field_bg,
+                       borderwidth=1,
+                       relief="solid",
+                       font=('Segoe UI', 10, 'normal'),  # Larger, clearer font
+                       rowheight=25)  # Increased row height for better readability
+        
+        # Configure alternating row colors for better readability
+        if current_mode == "Dark":
+            alternate_color = "#2d2d2d"
+        else:
+            alternate_color = "#f8f8f8"
+            
+        self.processes_tree.tag_configure('oddrow', background=field_bg)
+        self.processes_tree.tag_configure('evenrow', background=alternate_color)
+        
+        style.configure("Treeview.Heading",
+                       background=heading_bg,
+                       foreground=fg_color,
+                       borderwidth=1,
+                       relief="solid",
+                       font=('Segoe UI', 11, 'bold'))  # Bold headers with larger font
+        
+        style.map("Treeview",
+                 background=[('selected', select_bg)],
+                 foreground=[('selected', select_fg)])
+        
+        style.map("Treeview.Heading",
+                 background=[('active', heading_bg)],
+                 foreground=[('active', fg_color)])
+
     # Menu callback functions
     def file_menu_callback(self, choice):
         if choice == "Exit":
@@ -189,14 +257,17 @@ class PCInfoApp(ctk.CTk):
             self.change_update_interval()
         elif choice == "Theme: Dark":
             ctk.set_appearance_mode("dark")
+            self.setup_treeview_style()  # Update treeview style
             self.status_label.configure(text="Theme changed to Dark")
             self.after(2000, lambda: self.status_label.configure(text="Ready"))
         elif choice == "Theme: Light":
             ctk.set_appearance_mode("light")
+            self.setup_treeview_style()  # Update treeview style
             self.status_label.configure(text="Theme changed to Light")
             self.after(2000, lambda: self.status_label.configure(text="Ready"))
         elif choice == "Theme: System":
             ctk.set_appearance_mode("system")
+            self.setup_treeview_style()  # Update treeview style
             self.status_label.configure(text="Theme changed to System")
             self.after(2000, lambda: self.status_label.configure(text="Ready"))
         # Reset the menu to show "Settings" again
@@ -288,8 +359,19 @@ class PCInfoApp(ctk.CTk):
                 processes.append(proc.info)
         processes_sorted = sorted(processes, key=lambda x: x['cpu_percent'], reverse=True)
         self.processes_tree.delete(*self.processes_tree.get_children())  # Clear previous content
-        for proc_info in processes_sorted:
-            self.processes_tree.insert("", "end", values=(proc_info['pid'], proc_info['name'], proc_info['cpu_percent'], proc_info['memory_percent']))
+        
+        for index, proc_info in enumerate(processes_sorted):
+            # Format CPU and memory percentages for better readability
+            cpu_percent = f"{proc_info['cpu_percent']:.1f}%" if proc_info['cpu_percent'] else "0.0%"
+            memory_percent = f"{proc_info['memory_percent']:.1f}%" if proc_info['memory_percent'] else "0.0%"
+            
+            # Alternate row colors for better readability
+            tag = 'evenrow' if index % 2 == 0 else 'oddrow'
+            
+            # Use PID as the text for the first column (#0) and remove it from values
+            self.processes_tree.insert("", "end", text=str(proc_info['pid']), 
+                                     values=(proc_info['name'], cpu_percent, memory_percent),
+                                     tags=(tag,))
 
     # Clear the text display
     def clear_text_display(self):
