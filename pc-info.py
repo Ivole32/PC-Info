@@ -166,7 +166,7 @@ class PCInfoApp(ctk.CTk):
             self.display_processes()  # Display processes when opening
 
         # Initialize update interval
-        self.update_interval = 2
+        self.update_interval = 5
 
         # Initialize update interval button
         self.update_interval_button = None
