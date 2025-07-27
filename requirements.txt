@@ -1,2 +1,4 @@
 psutil
 py-cpuinfo
+customtkinter
+requests

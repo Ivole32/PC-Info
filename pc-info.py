@@ -6,8 +6,9 @@ import requests
 import threading
 import psutil
 import cpuinfo
-import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+import customtkinter as ctk
+from tkinter import messagebox, simpledialog
+from tkinter import ttk  # For Treeview widget
 import subprocess
 import time
 
@@ -40,7 +41,11 @@ def setup_logging():
 
 logger = setup_logging()
 
-class PCInfoApp(tk.Tk):
+# Set the appearance mode and color theme
+ctk.set_appearance_mode("dark")  # Modes: "System" (standard), "Dark", "Light"
+ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
+
+class PCInfoApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("PC Info")
@@ -54,33 +59,46 @@ class PCInfoApp(tk.Tk):
             self.destroy()  # Close the window if there's no internet connection
             return
 
-        # Create menu bar
-        self.menu_bar = tk.Menu(self)
-        self.config(menu=self.menu_bar)
+        # Create top frame for menu buttons
+        self.menu_frame = ctk.CTkFrame(self)
+        self.menu_frame.pack(fill="x", padx=10, pady=5)
 
-        # Create File menu
-        file_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.menu_bar.add_cascade(label="File", menu=file_menu)
-        file_menu.add_command(label="Exit", command=self.destroy)
+        # Create menu buttons
+        self.exit_button = ctk.CTkButton(self.menu_frame, text="Exit", command=self.destroy, width=80)
+        self.exit_button.pack(side="left", padx=5)
+        
+        self.settings_button = ctk.CTkButton(self.menu_frame, text="Change Update Interval", 
+                                           command=self.change_update_interval, width=150)
+        self.settings_button.pack(side="left", padx=5)
+        
+        self.refresh_button = ctk.CTkButton(self.menu_frame, text="Refresh Now", 
+                                          command=self.manual_refresh, width=100)
+        self.refresh_button.pack(side="left", padx=5)
 
-        # Create Settings menu
-        settings_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.menu_bar.add_cascade(label="Settings", menu=settings_menu)
-        settings_menu.add_command(label="Change Update Interval", command=self.change_update_interval)
+        # Create tabview for organizing content
+        self.tabview = ctk.CTkTabview(self, width=780, height=500)
+        self.tabview.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Add tabs
+        self.tabview.add("System Info")
+        self.tabview.add("Processes")
+        
+        # Create text widget for system information
+        self.text_display = ctk.CTkTextbox(self.tabview.tab("System Info"))
+        self.text_display.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Create text widget to display information
-        self.text_display = tk.Text(self)
-        self.text_display.pack(fill=tk.BOTH, expand=True)
-        self.text_display.config(state="disabled")
+        # Create frame for treeview in processes tab
+        self.tree_frame = ctk.CTkFrame(self.tabview.tab("Processes"))
+        self.tree_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
         # Create treeview to display processes
-        self.processes_tree = ttk.Treeview(self, columns=("pid", "name", "cpu_percent", "memory_percent"))
+        self.processes_tree = ttk.Treeview(self.tree_frame, columns=("pid", "name", "cpu_percent", "memory_percent"))
         self.processes_tree.heading("#0", text="PID")
         self.processes_tree.heading("pid", text="PID")
         self.processes_tree.heading("name", text="Name")
         self.processes_tree.heading("cpu_percent", text="CPU %")
         self.processes_tree.heading("memory_percent", text="Memory %")
-        self.processes_tree.pack(fill=tk.BOTH, expand=True)
+        self.processes_tree.pack(fill="both", expand=True, padx=5, pady=5)
 
         # Load system information
         self.system_info = get_system_info()
@@ -112,14 +130,11 @@ class PCInfoApp(tk.Tk):
 
     # Switch to hardware information tab
     def switch_to_hardware(self):
-        self.clear_text_display()  # Clear the text display
-        self.display_system_info()
-        self.display_gpu_info()
+        self.tabview.set("System Info")
 
     # Switch to tasks information tab
     def switch_to_tasks(self):
-        self.clear_text_display()  # Clear the text display
-        self.display_processes()  # Display processes
+        self.tabview.set("Processes")
 
     # Display settings
     def change_update_interval(self):
@@ -129,6 +144,13 @@ class PCInfoApp(tk.Tk):
             messagebox.showinfo("Success", f"Update interval set to {new_interval} seconds.")
         elif new_interval is not None:
             messagebox.showerror("Error", "Update interval must be a positive integer.")
+
+    # Manual refresh method
+    def manual_refresh(self):
+        self.system_info = get_system_info()
+        self.display_system_info()
+        self.display_gpu_info()
+        self.display_processes()
 
     # Update information in another thread
     def update_information_threaded(self):
@@ -140,26 +162,22 @@ class PCInfoApp(tk.Tk):
             time.sleep(self.update_interval)
 
     def display_system_info(self):
-        self.text_display.config(state="normal")
-        self.text_display.delete("1.0", tk.END)  # Clear previous content
+        self.text_display.delete("0.0", "end")  # Clear previous content
         if self.system_info:
-            self.text_display.insert(tk.END, "System Information:\n")
+            self.text_display.insert("0.0", "System Information:\n")
             for key, value in self.system_info.items():
-                self.text_display.insert(tk.END, f"{key}: {value}\n")
+                self.text_display.insert("end", f"{key}: {value}\n")
         else:
-            self.text_display.insert(tk.END, "Loading hardware information...")
-        self.text_display.config(state="disabled")
+            self.text_display.insert("0.0", "Loading hardware information...")
 
     # Display GPU information
     def display_gpu_info(self):
         gpu_info = get_gpu_info()
-        self.text_display.config(state="normal")
         if gpu_info:
-            self.text_display.insert(tk.END, "\nGPU Information:\n")
-            self.text_display.insert(tk.END, gpu_info)
+            self.text_display.insert("end", "\nGPU Information:\n")
+            self.text_display.insert("end", gpu_info)
         else:
-            self.text_display.insert(tk.END, "\nLoading GPU information...")
-        self.text_display.config(state="disabled")
+            self.text_display.insert("end", "\nLoading GPU information...")
 
     # Display processes in treeview
     def display_processes(self):
@@ -170,13 +188,11 @@ class PCInfoApp(tk.Tk):
         processes_sorted = sorted(processes, key=lambda x: x['cpu_percent'], reverse=True)
         self.processes_tree.delete(*self.processes_tree.get_children())  # Clear previous content
         for proc_info in processes_sorted:
-            self.processes_tree.insert("", tk.END, values=(proc_info['pid'], proc_info['name'], proc_info['cpu_percent'], proc_info['memory_percent']))
+            self.processes_tree.insert("", "end", values=(proc_info['pid'], proc_info['name'], proc_info['cpu_percent'], proc_info['memory_percent']))
 
     # Clear the text display
     def clear_text_display(self):
-        self.text_display.config(state="normal")
-        self.text_display.delete("1.0", tk.END)
-        self.text_display.config(state="disabled")
+        self.text_display.delete("0.0", "end")
     
     # Handle window closing event
     def on_close(self):
