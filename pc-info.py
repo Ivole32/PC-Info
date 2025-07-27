@@ -78,7 +78,7 @@ class PCInfoApp(ctk.CTk):
         # View Menu
         self.view_menu_button = ctk.CTkOptionMenu(
             self.menu_bar,
-            values=["System Info", "Processes", "Refresh Now"],
+            values=["System Info", "Processes", "Refresh Now", "End Selected Process"],
             command=self.view_menu_callback,
             width=60,
             height=30
@@ -144,6 +144,15 @@ class PCInfoApp(ctk.CTk):
         # Style the treeview for dark theme
         self.setup_treeview_style()
         
+        # Add context menu for process management
+        self.setup_process_context_menu()
+        
+        # Bind keyboard events for process management
+        self.processes_tree.bind('<Delete>', self.kill_selected_process_key)
+        self.processes_tree.bind('<Button-3>', self.show_context_menu)  # Right click
+        self.processes_tree.bind('<<TreeviewSelect>>', self.on_process_select)  # Selection changed
+        self.processes_tree.bind('<Button-1>', self.on_process_click)  # Left click
+        
         self.processes_tree.pack(fill="both", expand=True, padx=5, pady=5)
 
         # Load system information
@@ -161,6 +170,10 @@ class PCInfoApp(ctk.CTk):
 
         # Initialize update interval button
         self.update_interval_button = None
+        
+        # Track selection state to pause updates
+        self.process_selected = False
+        self.last_selected_pid = None
 
         # Start the update thread
         self.update_thread = threading.Thread(target=self.update_information_threaded, daemon=True)
@@ -233,6 +246,136 @@ class PCInfoApp(ctk.CTk):
                  background=[('active', heading_bg)],
                  foreground=[('active', fg_color)])
 
+    # Setup context menu for process management
+    def setup_process_context_menu(self):
+        import tkinter as tk
+        self.context_menu = tk.Menu(self, tearoff=0)
+        self.context_menu.add_command(label="End Process", command=self.kill_selected_process)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="Refresh Process List", command=self.manual_refresh)
+
+    # Show context menu on right click
+    def show_context_menu(self, event):
+        # Select the item under the cursor
+        item = self.processes_tree.identify_row(event.y)
+        if item:
+            self.processes_tree.selection_set(item)
+            self.processes_tree.focus(item)
+            # Show context menu
+            try:
+                self.context_menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                self.context_menu.grab_release()
+
+    # Handle process selection
+    def on_process_select(self, event):
+        selected_items = self.processes_tree.selection()
+        if selected_items:
+            self.process_selected = True
+            # Get PID of selected process
+            selected_item = selected_items[0]
+            self.last_selected_pid = self.processes_tree.item(selected_item)['text']
+            self.status_label.configure(text="Process selected - Updates paused")
+        else:
+            self.process_selected = False
+            self.last_selected_pid = None
+            self.status_label.configure(text="Ready")
+
+    # Handle left click to potentially deselect
+    def on_process_click(self, event):
+        # Check if click is on empty area
+        item = self.processes_tree.identify_row(event.y)
+        if not item:
+            # Clicked on empty area, clear selection
+            self.processes_tree.selection_remove(self.processes_tree.selection())
+            self.process_selected = False
+            self.last_selected_pid = None
+            self.status_label.configure(text="Ready")
+
+    # Kill selected process via keyboard shortcut (Delete key)
+    def kill_selected_process_key(self, event):
+        self.kill_selected_process()
+
+    # Kill the selected process
+    def kill_selected_process(self):
+        selected_item = self.processes_tree.selection()
+        if not selected_item:
+            messagebox.showwarning("No Selection", "Please select a process to terminate.")
+            return
+
+        # Get PID from the selected item
+        pid_str = self.processes_tree.item(selected_item[0])['text']
+        process_name = self.processes_tree.item(selected_item[0])['values'][0]
+        
+        try:
+            pid = int(pid_str)
+            
+            # Confirm before killing the process
+            result = messagebox.askyesno(
+                "Confirm Process Termination",
+                f"Are you sure you want to terminate the process?\n\n"
+                f"Process: {process_name}\n"
+                f"PID: {pid}\n\n"
+                f"Warning: Terminating system processes may cause instability!"
+            )
+            
+            if result:
+                try:
+                    process = psutil.Process(pid)
+                    process_name_actual = process.name()
+                    
+                    # Check if it's a critical system process
+                    critical_processes = ['System', 'Registry', 'csrss.exe', 'winlogon.exe', 'services.exe', 'lsass.exe', 'svchost.exe']
+                    if process_name_actual in critical_processes:
+                        messagebox.showerror(
+                            "Cannot Terminate Process",
+                            f"Cannot terminate critical system process: {process_name_actual}\n"
+                            f"This could cause system instability or crash."
+                        )
+                        return
+                    
+                    # Try graceful termination first
+                    process.terminate()
+                    
+                    # Wait a bit for graceful termination
+                    try:
+                        process.wait(timeout=3)
+                        self.status_label.configure(text=f"Process {process_name} terminated")
+                        logger.info(f"Successfully terminated process: {process_name} (PID: {pid})")
+                    except psutil.TimeoutExpired:
+                        # Force kill if graceful termination failed
+                        process.kill()
+                        self.status_label.configure(text=f"Process {process_name} force killed")
+                        logger.info(f"Force killed process: {process_name} (PID: {pid})")
+                    
+                    # Reset status after 3 seconds
+                    self.after(3000, lambda: self.status_label.configure(text="Ready"))
+                    
+                    # Clear selection and resume updates
+                    self.process_selected = False
+                    self.last_selected_pid = None
+                    
+                    # Refresh the process list
+                    self.display_processes()
+                    
+                except psutil.NoSuchProcess:
+                    messagebox.showinfo("Process Not Found", f"Process with PID {pid} no longer exists.")
+                except psutil.AccessDenied:
+                    messagebox.showerror(
+                        "Access Denied", 
+                        f"Access denied. Cannot terminate process: {process_name}\n"
+                        f"You may need administrator privileges to terminate this process."
+                    )
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to terminate process: {str(e)}")
+                    logger.error(f"Failed to terminate process {process_name} (PID: {pid}): {str(e)}")
+                    
+        except ValueError:
+            messagebox.showerror("Error", "Invalid process ID.")
+        except Exception as e:
+            messagebox.showerror("Error", f"An unexpected error occurred: {str(e)}")
+            logger.error(f"Unexpected error in kill_selected_process: {str(e)}")
+
     # Menu callback functions
     def file_menu_callback(self, choice):
         if choice == "Exit":
@@ -249,6 +392,9 @@ class PCInfoApp(ctk.CTk):
             self.manual_refresh()
             self.status_label.configure(text="Refreshed")
             self.after(2000, lambda: self.status_label.configure(text="Ready"))
+        elif choice == "End Selected Process":
+            self.tabview.set("Processes")  # Switch to processes tab first
+            self.kill_selected_process()
         # Reset the menu to show "View" again
         self.view_menu_button.set("View")
 
@@ -276,15 +422,19 @@ class PCInfoApp(ctk.CTk):
     def help_menu_callback(self, choice):
         if choice == "About":
             messagebox.showinfo("About PC Info", 
-                              "PC Info v2.0\n"
+                              "PC Info v2.1\n"
                               "A system information tool\n"
                               "Built with CustomTkinter\n\n"
                               "Features:\n"
                               "• System Hardware Information\n"
                               "• GPU Information\n"
                               "• Process Monitoring\n"
+                              "• Process Termination (Right-click or Del key)\n"
                               "• Real-time Updates\n"
-                              "• Modern Dark/Light Themes")
+                              "• Modern Dark/Light Themes\n\n"
+                              "Controls:\n"
+                              "• Right-click on process: Context menu\n"
+                              "• Delete key: Terminate selected process")
         # Reset the menu to show "Help" again
         self.help_menu_button.set("Help")
 
@@ -313,6 +463,13 @@ class PCInfoApp(ctk.CTk):
         self.system_info = get_system_info()
         self.display_system_info()
         self.display_gpu_info()
+        
+        # Clear selection before manual refresh
+        if self.process_selected:
+            self.processes_tree.selection_remove(self.processes_tree.selection())
+            self.process_selected = False
+            self.last_selected_pid = None
+        
         self.display_processes()
         self.status_label.configure(text="Updated")
         self.after(2000, lambda: self.status_label.configure(text="Ready"))
@@ -321,37 +478,187 @@ class PCInfoApp(ctk.CTk):
     def update_information_threaded(self):
         while True:
             try:
+                # Always update system info and GPU info (but less frequently)
                 self.system_info = get_system_info()
-                self.display_system_info()
-                self.display_gpu_info()
-                self.display_processes()
-                # Update status periodically to show it's working
-                if hasattr(self, 'status_label'):
-                    self.after(0, lambda: self.status_label.configure(text="Auto-updated"))
-                    self.after(1000, lambda: self.status_label.configure(text="Ready"))
+                
+                # Schedule UI updates with small delays to keep UI responsive
+                self.after_idle(self.display_system_info)
+                self.after_idle(self.display_gpu_info)
+                
+                # Only update processes if none is selected
+                if not self.process_selected:
+                    self.after_idle(self.display_processes_threaded)
+                    # Update status periodically to show it's working
+                    if hasattr(self, 'status_label'):
+                        self.after_idle(lambda: self.status_label.configure(text="Auto-updated"))
+                        self.after(1000, lambda: self.status_label.configure(text="Ready") if hasattr(self, 'status_label') else None)
+                else:
+                    # Check if the selected process still exists
+                    if self.last_selected_pid:
+                        try:
+                            pid = int(self.last_selected_pid)
+                            if not psutil.pid_exists(pid):
+                                # Selected process no longer exists, resume updates
+                                self.after_idle(self.clear_selection_and_resume)
+                        except (ValueError, psutil.NoSuchProcess):
+                            self.after_idle(self.clear_selection_and_resume)
+                            
             except Exception as e:
                 logger.error(f"Error in update thread: {e}")
             time.sleep(self.update_interval)
 
+    # Clear selection and resume updates
+    def clear_selection_and_resume(self):
+        try:
+            if hasattr(self, 'processes_tree'):
+                self.processes_tree.selection_remove(self.processes_tree.selection())
+            self.process_selected = False
+            self.last_selected_pid = None
+            if hasattr(self, 'status_label'):
+                self.status_label.configure(text="Selected process ended - Resuming updates")
+                self.after(2000, lambda: self.status_label.configure(text="Ready") if hasattr(self, 'status_label') else None)
+            self.after_idle(self.display_processes_threaded)
+        except Exception as e:
+            logger.error(f"Error in clear_selection_and_resume: {e}")
+
     def display_system_info(self):
-        self.text_display.delete("0.0", "end")  # Clear previous content
-        if self.system_info:
-            self.text_display.insert("0.0", "System Information:\n")
-            for key, value in self.system_info.items():
-                self.text_display.insert("end", f"{key}: {value}\n")
-        else:
-            self.text_display.insert("0.0", "Loading hardware information...")
+        try:
+            if hasattr(self, 'text_display'):
+                self.text_display.delete("0.0", "end")  # Clear previous content
+                if self.system_info:
+                    self.text_display.insert("0.0", "System Information:\n")
+                    for key, value in self.system_info.items():
+                        self.text_display.insert("end", f"{key}: {value}\n")
+                        # Small yield to keep UI responsive during large updates
+                        self.update_idletasks()
+                else:
+                    self.text_display.insert("0.0", "Loading hardware information...")
+        except Exception as e:
+            logger.error(f"Error updating system info display: {e}")
 
     # Display GPU information
     def display_gpu_info(self):
-        gpu_info = get_gpu_info()
-        if gpu_info:
-            self.text_display.insert("end", "\nGPU Information:\n")
-            self.text_display.insert("end", gpu_info)
-        else:
-            self.text_display.insert("end", "\nLoading GPU information...")
+        try:
+            if hasattr(self, 'text_display'):
+                gpu_info = get_gpu_info()
+                if gpu_info:
+                    self.text_display.insert("end", "\nGPU Information:\n")
+                    self.text_display.insert("end", gpu_info)
+                else:
+                    self.text_display.insert("end", "\nLoading GPU information...")
+                # Small yield to keep UI responsive
+                self.update_idletasks()
+        except Exception as e:
+            logger.error(f"Error updating GPU info display: {e}")
 
-    # Display processes in treeview
+    # Display processes in treeview (thread-safe version)
+    def display_processes_threaded(self):
+        def load_processes():
+            try:
+                processes = []
+                # Use a smaller batch size to avoid long blocking operations
+                count = 0
+                for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
+                    if proc.info['name'] != 'System Idle Process':
+                        processes.append(proc.info)
+                        count += 1
+                        # Yield control periodically during data collection
+                        if count % 50 == 0:
+                            time.sleep(0.001)  # Very short sleep to yield control
+                
+                processes_sorted = sorted(processes, key=lambda x: x['cpu_percent'], reverse=True)
+                return processes_sorted
+            except Exception as e:
+                logger.error(f"Error loading processes: {e}")
+                return []
+        
+        def update_ui(processes_sorted):
+            try:
+                if not self.process_selected and hasattr(self, 'processes_tree'):  # Double-check selection state and existence
+                    # Remember current selection if any
+                    current_selection = self.processes_tree.selection()
+                    selected_pid = None
+                    if current_selection:
+                        try:
+                            selected_pid = self.processes_tree.item(current_selection[0])['text']
+                        except:
+                            pass  # Ignore errors if item no longer exists
+                    
+                    # Clear and repopulate in smaller chunks to keep UI responsive
+                    self.processes_tree.delete(*self.processes_tree.get_children())
+                    
+                    # Process items in smaller batches
+                    batch_size = 25
+                    for batch_start in range(0, len(processes_sorted), batch_size):
+                        batch_end = min(batch_start + batch_size, len(processes_sorted))
+                        batch = processes_sorted[batch_start:batch_end]
+                        
+                        for index, proc_info in enumerate(batch, start=batch_start):
+                            # Format CPU and memory percentages for better readability
+                            cpu_percent = f"{proc_info['cpu_percent']:.1f}%" if proc_info['cpu_percent'] else "0.0%"
+                            memory_percent = f"{proc_info['memory_percent']:.1f}%" if proc_info['memory_percent'] else "0.0%"
+                            
+                            # Alternate row colors for better readability
+                            tag = 'evenrow' if index % 2 == 0 else 'oddrow'
+                            
+                            # Insert process
+                            try:
+                                item_id = self.processes_tree.insert("", "end", text=str(proc_info['pid']), 
+                                                                   values=(proc_info['name'], cpu_percent, memory_percent),
+                                                                   tags=(tag,))
+                                
+                                # Restore selection if this was the previously selected process
+                                if selected_pid and str(proc_info['pid']) == selected_pid:
+                                    self.processes_tree.selection_set(item_id)
+                                    self.processes_tree.focus(item_id)
+                            except:
+                                pass  # Ignore individual item errors
+                        
+                        # Yield control between batches
+                        if batch_end < len(processes_sorted):
+                            self.after_idle(lambda b=batch_end: self.update_after_yield(processes_sorted, b, selected_pid))
+                            return  # Exit and continue with next batch later
+                            
+            except Exception as e:
+                logger.error(f"Error updating process UI: {e}")
+        
+        # Load processes in a separate thread to avoid UI freezing
+        import threading
+        def background_load():
+            processes = load_processes()
+            # Update UI in main thread
+            self.after_idle(lambda: update_ui(processes))
+        
+        thread = threading.Thread(target=background_load, daemon=True)
+        thread.start()
+
+    # Helper method for batched updates
+    def update_after_yield(self, processes_sorted, start_index, selected_pid):
+        batch_size = 25
+        batch_end = min(start_index + batch_size, len(processes_sorted))
+        batch = processes_sorted[start_index:batch_end]
+        
+        for index, proc_info in enumerate(batch, start=start_index):
+            cpu_percent = f"{proc_info['cpu_percent']:.1f}%" if proc_info['cpu_percent'] else "0.0%"
+            memory_percent = f"{proc_info['memory_percent']:.1f}%" if proc_info['memory_percent'] else "0.0%"
+            tag = 'evenrow' if index % 2 == 0 else 'oddrow'
+            
+            try:
+                item_id = self.processes_tree.insert("", "end", text=str(proc_info['pid']), 
+                                                   values=(proc_info['name'], cpu_percent, memory_percent),
+                                                   tags=(tag,))
+                
+                if selected_pid and str(proc_info['pid']) == selected_pid:
+                    self.processes_tree.selection_set(item_id)
+                    self.processes_tree.focus(item_id)
+            except:
+                pass
+        
+        # Continue with next batch if there are more items
+        if batch_end < len(processes_sorted):
+            self.after_idle(lambda: self.update_after_yield(processes_sorted, batch_end, selected_pid))
+
+    # Display processes in treeview (legacy method for manual refresh)
     def display_processes(self):
         processes = []
         for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
@@ -379,8 +686,16 @@ class PCInfoApp(ctk.CTk):
     
     # Handle window closing event
     def on_close(self):
-        self.destroy()  # Close the Tkinter window
-        root.quit()  # Exit the main loop
+        try:
+            # Stop any ongoing operations
+            self.process_selected = False
+            # Give time for threads to finish
+            if hasattr(self, 'update_thread'):
+                self.update_thread = None
+            self.destroy()  # Close the Tkinter window
+        except Exception as e:
+            logger.error(f"Error during window closing: {e}")
+            self.destroy()
 
 # Retrieve system information
 def get_system_info():
