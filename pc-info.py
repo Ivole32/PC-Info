@@ -153,17 +153,13 @@ class PCInfoApp(ctk.CTk):
         self.processes_tree.bind('<<TreeviewSelect>>', self.on_process_select)  # Selection changed
         self.processes_tree.bind('<Button-1>', self.on_process_click)  # Left click
         
+        # Bind column header clicks for sorting
+        self.processes_tree.heading("#0", command=lambda: self.sort_processes("pid"))
+        self.processes_tree.heading("name", command=lambda: self.sort_processes("name"))
+        self.processes_tree.heading("cpu_percent", command=lambda: self.sort_processes("cpu_percent"))
+        self.processes_tree.heading("memory_percent", command=lambda: self.sort_processes("memory_percent"))
+        
         self.processes_tree.pack(fill="both", expand=True, padx=5, pady=5)
-
-        # Load system information
-        self.system_info = get_system_info()
-
-        if not self.system_info:
-            self.update_information()
-        else:
-            self.display_system_info()
-            self.display_gpu_info()  # Call display_gpu_info() to display GPU info when opening
-            self.display_processes()  # Display processes when opening
 
         # Initialize update interval
         self.update_interval = 5
@@ -174,6 +170,20 @@ class PCInfoApp(ctk.CTk):
         # Track selection state to pause updates
         self.process_selected = False
         self.last_selected_pid = None
+        
+        # Track sorting state
+        self.sort_column = "cpu_percent"  # Default sort column
+        self.sort_reverse = True  # Default to descending (highest CPU first)
+
+        # Load system information
+        self.system_info = get_system_info()
+
+        if not self.system_info:
+            self.update_information()
+        else:
+            self.display_system_info()
+            self.display_gpu_info()  # Call display_gpu_info() to display GPU info when opening
+            self.display_processes()  # Display processes when opening
 
         # Start the update thread
         self.update_thread = threading.Thread(target=self.update_information_threaded, daemon=True)
@@ -291,6 +301,63 @@ class PCInfoApp(ctk.CTk):
             self.process_selected = False
             self.last_selected_pid = None
             self.status_label.configure(text="Ready")
+
+    # Sort processes by column
+    def sort_processes(self, column):
+        # Toggle sort direction if clicking the same column
+        if self.sort_column == column:
+            self.sort_reverse = not self.sort_reverse
+        else:
+            self.sort_column = column
+            # Set default sort direction for each column
+            if column == "pid":
+                self.sort_reverse = False  # PID ascending by default
+            elif column == "name":
+                self.sort_reverse = False  # Name ascending by default
+            elif column in ["cpu_percent", "memory_percent"]:
+                self.sort_reverse = True  # CPU/Memory descending by default
+        
+        # Update column headers to show sort direction
+        self.update_column_headers()
+        
+        # Refresh the process list with new sorting
+        if not self.process_selected:
+            self.display_processes_threaded()
+        else:
+            # If a process is selected, update immediately
+            self.display_processes()
+
+    # Update column headers to show sort indicators
+    def update_column_headers(self):
+        # Reset all headers
+        self.processes_tree.heading("#0", text="PID")
+        self.processes_tree.heading("name", text="Process Name")
+        self.processes_tree.heading("cpu_percent", text="CPU Usage %")
+        self.processes_tree.heading("memory_percent", text="Memory %")
+        
+        # Add sort indicator to current sort column
+        sort_indicator = " ↓" if self.sort_reverse else " ↑"
+        
+        if self.sort_column == "pid":
+            self.processes_tree.heading("#0", text=f"PID{sort_indicator}")
+        elif self.sort_column == "name":
+            self.processes_tree.heading("name", text=f"Process Name{sort_indicator}")
+        elif self.sort_column == "cpu_percent":
+            self.processes_tree.heading("cpu_percent", text=f"CPU Usage %{sort_indicator}")
+        elif self.sort_column == "memory_percent":
+            self.processes_tree.heading("memory_percent", text=f"Memory %{sort_indicator}")
+
+    # Get sort key for a process
+    def get_sort_key(self, proc_info):
+        if self.sort_column == "pid":
+            return int(proc_info.get('pid', 0))
+        elif self.sort_column == "name":
+            return proc_info.get('name', '').lower()
+        elif self.sort_column == "cpu_percent":
+            return float(proc_info.get('cpu_percent', 0) or 0)
+        elif self.sort_column == "memory_percent":
+            return float(proc_info.get('memory_percent', 0) or 0)
+        return 0
 
     # Kill selected process via keyboard shortcut (Delete key)
     def kill_selected_process_key(self, event):
@@ -566,15 +633,18 @@ class PCInfoApp(ctk.CTk):
                         if count % 50 == 0:
                             time.sleep(0.001)  # Very short sleep to yield control
                 
-                processes_sorted = sorted(processes, key=lambda x: x['cpu_percent'], reverse=True)
-                return processes_sorted
+                # Sort using current sort settings
+                return processes
             except Exception as e:
                 logger.error(f"Error loading processes: {e}")
                 return []
         
-        def update_ui(processes_sorted):
+        def update_ui(processes):
             try:
                 if not self.process_selected and hasattr(self, 'processes_tree'):  # Double-check selection state and existence
+                    # Sort the processes using current sort settings
+                    processes_sorted = sorted(processes, key=self.get_sort_key, reverse=self.sort_reverse)
+                    
                     # Remember current selection if any
                     current_selection = self.processes_tree.selection()
                     selected_pid = None
@@ -618,6 +688,9 @@ class PCInfoApp(ctk.CTk):
                         if batch_end < len(processes_sorted):
                             self.after_idle(lambda b=batch_end: self.update_after_yield(processes_sorted, b, selected_pid))
                             return  # Exit and continue with next batch later
+                    
+                    # Update column headers after all processes are loaded
+                    self.update_column_headers()
                             
             except Exception as e:
                 logger.error(f"Error updating process UI: {e}")
@@ -657,6 +730,9 @@ class PCInfoApp(ctk.CTk):
         # Continue with next batch if there are more items
         if batch_end < len(processes_sorted):
             self.after_idle(lambda: self.update_after_yield(processes_sorted, batch_end, selected_pid))
+        else:
+            # Update column headers when all batches are done
+            self.update_column_headers()
 
     # Display processes in treeview (legacy method for manual refresh)
     def display_processes(self):
@@ -664,7 +740,10 @@ class PCInfoApp(ctk.CTk):
         for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
             if proc.info['name'] != 'System Idle Process':
                 processes.append(proc.info)
-        processes_sorted = sorted(processes, key=lambda x: x['cpu_percent'], reverse=True)
+        
+        # Sort using current sort settings
+        processes_sorted = sorted(processes, key=self.get_sort_key, reverse=self.sort_reverse)
+        
         self.processes_tree.delete(*self.processes_tree.get_children())  # Clear previous content
         
         for index, proc_info in enumerate(processes_sorted):
@@ -679,6 +758,9 @@ class PCInfoApp(ctk.CTk):
             self.processes_tree.insert("", "end", text=str(proc_info['pid']), 
                                      values=(proc_info['name'], cpu_percent, memory_percent),
                                      tags=(tag,))
+        
+        # Update column headers
+        self.update_column_headers()
 
     # Clear the text display
     def clear_text_display(self):
