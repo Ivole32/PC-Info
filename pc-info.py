@@ -51,6 +51,13 @@ class PCInfoApp(ctk.CTk):
         self.resizable(width=False, height=False)
         self.geometry("800x600")  # Set a fixed window size
         self.protocol("WM_DELETE_WINDOW", self.on_close)  # Handle window closing event
+        
+        # Set application icon
+        self.set_app_icon()
+        
+        # For Windows, set icon again after window is fully loaded
+        if platform.system() == "Windows":
+            self.after(500, self.ensure_windows_icon)
 
         # Check internet connection
         if not self.check_internet_connection():
@@ -205,6 +212,241 @@ class PCInfoApp(ctk.CTk):
         # Start the update thread
         self.update_thread = threading.Thread(target=self.update_information_threaded, daemon=True)
         self.update_thread.start()
+
+    # Set application icon for all platforms
+    def set_app_icon(self):
+        try:
+            # Get the directory where the script is located
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            icon_path = os.path.join(script_dir, "icon.png")
+            
+            # Check if icon file exists
+            if os.path.exists(icon_path):
+                icon_set = False
+                
+                # Windows-specific icon handling
+                if platform.system() == "Windows":
+                    # First try to convert and use ICO format
+                    ico_path = icon_path.replace('.png', '.ico')
+                    
+                    # Create ICO file if it doesn't exist
+                    if not os.path.exists(ico_path):
+                        if self.create_ico_from_png(icon_path, ico_path):
+                            logger.info(f"Created ICO file: {ico_path}")
+                    
+                    # Try to use ICO file
+                    if os.path.exists(ico_path):
+                        try:
+                            self.iconbitmap(ico_path)
+                            icon_set = True
+                            logger.info(f"Windows icon set using ICO: {ico_path}")
+                        except Exception as e:
+                            logger.warning(f"Could not set ICO icon: {e}")
+                    
+                    # If ICO failed, try PNG with PhotoImage
+                    if not icon_set:
+                        try:
+                            import tkinter as tk
+                            # Wait for window to be fully initialized
+                            self.update()
+                            photo = tk.PhotoImage(file=icon_path)
+                            self.iconphoto(True, photo)
+                            # Keep reference to prevent garbage collection
+                            self.icon_photo = photo
+                            icon_set = True
+                            logger.info(f"Windows icon set using PhotoImage: {icon_path}")
+                        except Exception as e:
+                            logger.warning(f"Could not set PhotoImage icon: {e}")
+                
+                else:
+                    # Non-Windows systems (macOS, Linux)
+                    try:
+                        import tkinter as tk
+                        photo = tk.PhotoImage(file=icon_path)
+                        self.iconphoto(True, photo)
+                        self.icon_photo = photo
+                        icon_set = True
+                        logger.info(f"Icon set using PhotoImage: {icon_path}")
+                    except Exception as e:
+                        logger.warning(f"Could not set PhotoImage icon: {e}")
+                
+                if not icon_set:
+                    self.set_fallback_icon()
+                else:
+                    # Set additional Windows taskbar properties
+                    if platform.system() == "Windows":
+                        self.set_windows_properties()
+                    
+            else:
+                logger.warning(f"Icon file not found: {icon_path}")
+                self.set_fallback_icon()
+                
+        except Exception as e:
+            logger.error(f"Error setting application icon: {e}")
+            self.set_fallback_icon()
+
+    # Create ICO file from PNG
+    def create_ico_from_png(self, png_path, ico_path):
+        try:
+            from PIL import Image
+            
+            with Image.open(png_path) as img:
+                # Convert to RGBA if not already
+                if img.mode != 'RGBA':
+                    img = img.convert('RGBA')
+                
+                # Create multiple sizes for better Windows compatibility
+                icon_sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+                
+                # Resize and save as ICO
+                img.save(ico_path, format='ICO', sizes=icon_sizes)
+                return True
+                
+        except ImportError:
+            logger.warning("PIL (Pillow) not available - cannot convert PNG to ICO")
+            return False
+        except Exception as e:
+            logger.warning(f"Could not create ICO from PNG: {e}")
+            return False
+
+    # Set Windows-specific properties
+    def set_windows_properties(self):
+        try:
+            if platform.system() == "Windows":
+                # Set application user model ID for proper taskbar grouping
+                import ctypes
+                try:
+                    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("PCInfo.SystemMonitor.1.0")
+                    logger.info("Windows App User Model ID set")
+                except Exception as e:
+                    logger.warning(f"Could not set App User Model ID: {e}")
+                    
+                # Try to set window icon using Windows API as fallback
+                try:
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    ico_path = os.path.join(script_dir, "icon.ico")
+                    
+                    if os.path.exists(ico_path):
+                        # Get window handle after window is shown
+                        self.after(100, lambda: self.set_window_icon_winapi(ico_path))
+                except Exception as e:
+                    logger.warning(f"Could not prepare Windows API icon: {e}")
+                    
+        except Exception as e:
+            logger.warning(f"Could not set Windows properties: {e}")
+
+    # Set window icon using Windows API
+    def set_window_icon_winapi(self, ico_path):
+        try:
+            import ctypes
+            from ctypes import wintypes
+            
+            # Get window handle
+            hwnd = self.winfo_id()
+            
+            # Load icon
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            
+            # Constants
+            IMAGE_ICON = 1
+            LR_LOADFROMFILE = 0x00000010
+            LR_DEFAULTSIZE = 0x00000040
+            
+            WM_SETICON = 0x0080
+            ICON_SMALL = 0
+            ICON_BIG = 1
+            
+            # Load icon from file
+            hicon_small = user32.LoadImageW(
+                None,
+                ico_path,
+                IMAGE_ICON,
+                16, 16,
+                LR_LOADFROMFILE | LR_DEFAULTSIZE
+            )
+            
+            hicon_large = user32.LoadImageW(
+                None,
+                ico_path,
+                IMAGE_ICON,
+                32, 32,
+                LR_LOADFROMFILE | LR_DEFAULTSIZE
+            )
+            
+            if hicon_small:
+                user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small)
+                logger.info("Small window icon set via Windows API")
+                
+            if hicon_large:
+                user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_large)
+                logger.info("Large window icon set via Windows API")
+                
+        except Exception as e:
+            logger.warning(f"Could not set icon via Windows API: {e}")
+
+    # Ensure Windows icon is properly set after window initialization
+    def ensure_windows_icon(self):
+        try:
+            if platform.system() == "Windows":
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                icon_path = os.path.join(script_dir, "icon.png")
+                ico_path = os.path.join(script_dir, "icon.ico")
+                
+                # Try ICO first if available
+                if os.path.exists(ico_path):
+                    try:
+                        self.iconbitmap(ico_path)
+                        logger.info("Windows icon re-applied using ICO")
+                    except Exception as e:
+                        logger.warning(f"Could not re-apply ICO icon: {e}")
+                        # Try PNG fallback
+                        if os.path.exists(icon_path):
+                            try:
+                                import tkinter as tk
+                                photo = tk.PhotoImage(file=icon_path)
+                                self.iconphoto(True, photo)
+                                self.icon_photo = photo
+                                logger.info("Windows icon re-applied using PhotoImage")
+                            except Exception as e2:
+                                logger.warning(f"Could not re-apply PhotoImage icon: {e2}")
+                
+                # Set Windows API icon as additional measure
+                if os.path.exists(ico_path):
+                    self.set_window_icon_winapi(ico_path)
+                    
+        except Exception as e:
+            logger.warning(f"Error in ensure_windows_icon: {e}")
+
+    # Alternative method to set icon using base64 encoded data (fallback)
+    def set_fallback_icon(self):
+        try:
+            # For Windows, try a different approach with emoji
+            if platform.system() == "Windows":
+                self.title("PC Info 🖥️")  # Add computer emoji to title
+                # Try to set a basic system icon
+                try:
+                    import tkinter as tk
+                    # Create a simple colored square as fallback icon
+                    fallback_icon = tk.PhotoImage(width=32, height=32)
+                    fallback_icon.put("#1f538d", to=(0, 0, 32, 32))  # Blue square
+                    self.iconphoto(True, fallback_icon)
+                    self.fallback_icon_ref = fallback_icon  # Keep reference
+                    logger.info("Using fallback colored icon")
+                except Exception:
+                    logger.info("Using emoji in title as final fallback")
+            else:
+                # For other systems
+                self.title("PC Info 🖥️")
+                logger.info("Using emoji in title as icon fallback")
+            
+        except Exception as e:
+            logger.warning(f"Could not set fallback icon: {e}")
+            # Last resort - just change title
+            try:
+                self.title("PC Info")
+            except:
+                pass
 
     # Check internet connection
     def check_internet_connection(self):
