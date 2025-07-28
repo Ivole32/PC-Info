@@ -1,17 +1,16 @@
 import os
-import platform
-import logging
-import datetime
-import requests
-import threading
+import time
 import psutil
+import logging
 import cpuinfo
+import requests
+import datetime
+import platform
+import threading
+import subprocess
 import customtkinter as ctk
 from tkinter import messagebox, simpledialog
-from tkinter import ttk  # For Treeview widget
-import subprocess
-import time
-
+from tkinter import ttk 
 
 # Set up logging
 def setup_logging():
@@ -177,12 +176,17 @@ class PCInfoApp(ctk.CTk):
 
         # Load system information
         self.system_info = get_system_info()
+        
+        # Load GPU information once and cache it
+        self.gpu_info = get_gpu_info()
+        
+        # Flag to track if system info display is initialized
+        self.system_info_displayed = False
 
         if not self.system_info:
             self.update_information()
         else:
-            self.display_system_info()
-            self.display_gpu_info()  # Call display_gpu_info() to display GPU info when opening
+            self.display_complete_system_info()  # Display all system info once
             self.display_processes()  # Display processes when opening
 
         # Start the update thread
@@ -528,8 +532,12 @@ class PCInfoApp(ctk.CTk):
     def manual_refresh(self):
         self.status_label.configure(text="Updating...")
         self.system_info = get_system_info()
-        self.display_system_info()
-        self.display_gpu_info()
+        # Reload GPU info on manual refresh
+        self.gpu_info = get_gpu_info()
+        
+        # Reset the display flag and show complete info
+        self.system_info_displayed = False
+        self.display_complete_system_info()
         
         # Clear selection before manual refresh
         if self.process_selected:
@@ -545,12 +553,11 @@ class PCInfoApp(ctk.CTk):
     def update_information_threaded(self):
         while True:
             try:
-                # Always update system info and GPU info (but less frequently)
+                # Always update system info (but less frequently)
                 self.system_info = get_system_info()
                 
-                # Schedule UI updates with small delays to keep UI responsive
-                self.after_idle(self.display_system_info)
-                self.after_idle(self.display_gpu_info)
+                # Update only system info part (preserve GPU info display)
+                self.after_idle(self.update_system_info_only)
                 
                 # Only update processes if none is selected
                 if not self.process_selected:
@@ -603,16 +610,75 @@ class PCInfoApp(ctk.CTk):
         except Exception as e:
             logger.error(f"Error updating system info display: {e}")
 
-    # Display GPU information
+    # Display complete system information (system + GPU) - called once
+    def display_complete_system_info(self):
+        try:
+            if hasattr(self, 'text_display') and not self.system_info_displayed:
+                self.text_display.delete("0.0", "end")  # Clear previous content
+                
+                # Display system information
+                if self.system_info:
+                    self.text_display.insert("0.0", "System Information:\n")
+                    for key, value in self.system_info.items():
+                        self.text_display.insert("end", f"{key}: {value}\n")
+                else:
+                    self.text_display.insert("0.0", "Loading hardware information...\n")
+                
+                # Display GPU information
+                if hasattr(self, 'gpu_info') and self.gpu_info:
+                    self.text_display.insert("end", "\nGPU Information:\n")
+                    self.text_display.insert("end", self.gpu_info)
+                else:
+                    self.text_display.insert("end", "\nGPU Information not available\n")
+                
+                self.system_info_displayed = True
+                self.update_idletasks()
+        except Exception as e:
+            logger.error(f"Error updating complete system info display: {e}")
+
+    # Update only system information (without GPU, for threaded updates)
+    def update_system_info_only(self):
+        try:
+            if hasattr(self, 'text_display') and hasattr(self, 'system_info') and self.system_info_displayed:
+                # Find and update only the system information part
+                current_content = self.text_display.get("0.0", "end")
+                
+                # Split content to preserve GPU info
+                lines = current_content.split('\n')
+                gpu_start_index = -1
+                
+                for i, line in enumerate(lines):
+                    if line.startswith("GPU Information:"):
+                        gpu_start_index = i
+                        break
+                
+                # Rebuild system info section
+                system_lines = ["System Information:"]
+                for key, value in self.system_info.items():
+                    system_lines.append(f"{key}: {value}")
+                
+                if gpu_start_index > 0:
+                    # Preserve GPU info
+                    gpu_lines = lines[gpu_start_index:]
+                    new_content = '\n'.join(system_lines + [''] + gpu_lines)
+                else:
+                    new_content = '\n'.join(system_lines)
+                
+                self.text_display.delete("0.0", "end")
+                self.text_display.insert("0.0", new_content)
+                self.update_idletasks()
+        except Exception as e:
+            logger.error(f"Error updating system info only: {e}")
+
+    # Display GPU information (legacy method - now unused in automatic updates)
     def display_gpu_info(self):
         try:
-            if hasattr(self, 'text_display'):
-                gpu_info = get_gpu_info()
-                if gpu_info:
+            if hasattr(self, 'text_display') and hasattr(self, 'gpu_info'):
+                if self.gpu_info:
                     self.text_display.insert("end", "\nGPU Information:\n")
-                    self.text_display.insert("end", gpu_info)
+                    self.text_display.insert("end", self.gpu_info)
                 else:
-                    self.text_display.insert("end", "\nLoading GPU information...")
+                    self.text_display.insert("end", "\nGPU Information not available\n")
                 # Small yield to keep UI responsive
                 self.update_idletasks()
         except Exception as e:
@@ -811,40 +877,140 @@ def get_system_info():
 def get_gpu_info():
     try:
         system = platform.system()
-        if system == 'Darwin':  # macOS
-            result = subprocess.run(['system_profiler', 'SPDisplaysDataType'], capture_output=True, text=True)
-            output_lines = result.stdout.split('\n')
-            gpu_info = ""
-            for line in output_lines:
-                if 'Chipset Model' in line:
-                    gpu_info += f"GPU: {line.strip()}\n"
-            if gpu_info:
-                return gpu_info
-            else:
-                return "No GPU information available."
-        elif system == 'Windows':  # Windows
-            result = subprocess.run(['wmic', 'path', 'win32_videocontroller', 'get', 'caption'], capture_output=True, text=True)
-            output_lines = result.stdout.split('\n')
-            gpu_info = ""
-            for line in output_lines:
-                if 'NVIDIA' in line or 'AMD' in line or 'Intel' in line:
-                    gpu_info += f"GPU: {line.strip()}\n"
-            if gpu_info:
-                return gpu_info
-            else:
-                return "No GPU information available."
-        elif system == 'Linux':  # Linux
-            result = subprocess.run(['lspci', '-vnn', '|', 'grep', '-i', 'vga', '|', 'grep', '-i', 'vga', '|', 'cut', '-d', ']', '-f', '3'], capture_output=True, text=True, shell=True)
-            gpu_info = result.stdout.strip()
-            if gpu_info:
-                return f"GPU: {gpu_info}"
-            else:
-                return "No GPU information available."
+        gpu_list = []
+
+        # Helper: Add GPU only if it's not a duplicate
+        def add_gpu(info):
+            if not any(info['name'] in gpu['name'] for gpu in gpu_list):
+                gpu_list.append(info)
+
+        # --- NVIDIA-GPUs via nvidia-smi ---
+        def query_nvidia_smi():
+            try:
+                result = subprocess.run(
+                    ['nvidia-smi', '--query-gpu=name,memory.total,driver_version', '--format=csv,noheader,nounits'],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    lines = result.stdout.strip().splitlines()
+                    for line in lines:
+                        parts = line.strip().split(',')
+                        if len(parts) >= 3:
+                            name = parts[0].strip()
+                            memory = f"{parts[1].strip()} MB"
+                            driver = parts[2].strip()
+                            add_gpu({'name': name, 'memory': memory, 'driver': driver, 'source': 'nvidia-smi'})
+            except Exception:
+                pass
+
+        # --- Windows: WMI fallback (Intel/AMD/2nd GPU) ---
+        def query_windows_wmi():
+            try:
+                powershell_cmd = """
+                Get-CimInstance Win32_VideoController | ForEach-Object {
+                    Write-Output "NAME: $($_.Name)"
+                    Write-Output "VRAM: $($_.AdapterRAM)"
+                    Write-Output "DRIVER: $($_.DriverVersion)"
+                    Write-Output "---"
+                }
+                """
+                result = subprocess.run(['powershell', '-Command', powershell_cmd],
+                                        capture_output=True, text=True, timeout=10)
+                if result.returncode == 0:
+                    blocks = result.stdout.strip().split('---')
+                    for block in blocks:
+                        lines = block.strip().splitlines()
+                        gpu = {}
+                        for line in lines:
+                            if line.startswith("NAME:"):
+                                gpu["name"] = line.split(":", 1)[1].strip()
+                            elif line.startswith("VRAM:"):
+                                try:
+                                    vram_bytes = int(line.split(":", 1)[1].strip())
+                                    if vram_bytes > 0:
+                                        vram_gb = vram_bytes / (1024 ** 3)
+                                        gpu["memory"] = f"{vram_gb:.1f} GB" if vram_gb >= 1 else f"{vram_bytes / (1024**2):.0f} MB"
+                                except:
+                                    pass
+                            elif line.startswith("DRIVER:"):
+                                gpu["driver"] = line.split(":", 1)[1].strip()
+
+                        if gpu.get("name"):
+                            gpu['source'] = 'WMI'
+                            add_gpu(gpu)
+            except:
+                pass
+
+        # --- macOS GPU info ---
+        def query_macos():
+            try:
+                result = subprocess.run(['system_profiler', 'SPDisplaysDataType'], capture_output=True, text=True)
+                lines = result.stdout.splitlines()
+                current_gpu = {}
+
+                for line in lines:
+                    line = line.strip()
+                    if line.startswith("Chipset Model:"):
+                        if current_gpu:
+                            current_gpu['source'] = 'macOS'
+                            add_gpu(current_gpu)
+                        current_gpu = {"name": line.split(":", 1)[1].strip()}
+                    elif "VRAM" in line:
+                        current_gpu["memory"] = line.split(":", 1)[1].strip()
+                    elif "Vendor:" in line:
+                        current_gpu["vendor"] = line.split(":", 1)[1].strip()
+
+                if current_gpu:
+                    current_gpu['source'] = 'macOS'
+                    add_gpu(current_gpu)
+            except:
+                pass
+
+        # --- Linux GPU via lspci ---
+        def query_linux():
+            try:
+                result = subprocess.run(['lspci'], capture_output=True, text=True)
+                lines = result.stdout.splitlines()
+                for line in lines:
+                    if any(kw in line for kw in ['VGA', '3D', 'Display']):
+                        name = line.split(':')[-1].strip()
+                        add_gpu({'name': name, 'source': 'lspci'})
+            except:
+                pass
+
+        # Detect system and query
+        if system == 'Windows':
+            query_nvidia_smi()
+            query_windows_wmi()
+        elif system == 'Darwin':
+            query_macos()
+        elif system == 'Linux':
+            query_nvidia_smi()
+            query_linux()
         else:
-            return "Unsupported platform."
+            return "Unsupported OS."
+
+        # Format output
+        if not gpu_list:
+            return "No GPUs detected."
+
+        output = ""
+        for i, gpu in enumerate(gpu_list, 1):
+            if len(gpu_list) > 1:
+                output += f"=== GPU {i} ===\n"
+            output += f"GPU: {gpu['name']}\n"
+            if gpu.get('memory'):
+                output += f"VRAM: {gpu['memory']}\n"
+            if gpu.get('driver'):
+                output += f"Driver: {gpu['driver']}\n"
+            if gpu.get('vendor'):
+                output += f"Vendor: {gpu['vendor']}\n"
+            output += f"Source: {gpu['source']}\n\n"
+
+        return output.strip()
+
     except Exception as e:
-        logger.error(f"An error occurred while retrieving GPU information: {e}")
-        return "Failed to retrieve GPU information."
+        return f"Fehler bei GPU-Erkennung: {e}"
 
 if __name__ == "__main__":
     root = PCInfoApp()
