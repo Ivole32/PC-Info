@@ -1296,8 +1296,11 @@ def get_gpu_info():
         return output.strip()
 
     except Exception as e:
-        return f"Fehler bei GPU-Erkennung: {e}"
+        return f"Error detecting GPU: {e}"
 
-if __name__ == "__main__":
+def main() -> None:
     root = PCInfoApp()
     root.mainloop()
+
+if __name__ == "__main__":
+    main()
