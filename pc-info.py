@@ -119,9 +119,22 @@ class PCInfoApp(ctk.CTk):
         self.tabview.add("System Info")
         self.tabview.add("Processes")
         
-        # Create text widget for system information
-        self.text_display = ctk.CTkTextbox(self.tabview.tab("System Info"))
-        self.text_display.pack(fill="both", expand=True, padx=10, pady=10)
+        # Create frame for system info content
+        self.info_frame = ctk.CTkFrame(self.tabview.tab("System Info"))
+        self.info_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Create text widget for system information (read-only)
+        self.text_display = ctk.CTkTextbox(self.info_frame, state="disabled")
+        self.text_display.pack(fill="both", expand=True, padx=10, pady=(10, 5))
+        
+        # Create copy button
+        self.copy_button = ctk.CTkButton(
+            self.info_frame,
+            text="Copy System Info to Clipboard",
+            command=self.copy_system_info,
+            height=30
+        )
+        self.copy_button.pack(pady=(0, 10))
 
         # Create frame for treeview in processes tab
         self.tree_frame = ctk.CTkFrame(self.tabview.tab("Processes"))
@@ -447,6 +460,26 @@ class PCInfoApp(ctk.CTk):
             messagebox.showerror("Error", f"An unexpected error occurred: {str(e)}")
             logger.error(f"Unexpected error in kill_selected_process: {str(e)}")
 
+    # Copy system information to clipboard
+    def copy_system_info(self):
+        try:
+            # Get all text content
+            content = self.text_display.get("0.0", "end-1c")
+            
+            # Copy to clipboard
+            self.clipboard_clear()
+            self.clipboard_append(content)
+            
+            # Show confirmation
+            self.status_label.configure(text="System info copied to clipboard")
+            self.after(3000, lambda: self.status_label.configure(text="Ready"))
+            
+            logger.info("System information copied to clipboard")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to copy to clipboard: {str(e)}")
+            logger.error(f"Error copying to clipboard: {e}")
+
     # Menu callback functions
     def file_menu_callback(self, choice):
         if choice == "Exit":
@@ -598,6 +631,7 @@ class PCInfoApp(ctk.CTk):
     def display_system_info(self):
         try:
             if hasattr(self, 'text_display'):
+                self.text_display.configure(state="normal")  # Enable editing temporarily
                 self.text_display.delete("0.0", "end")  # Clear previous content
                 if self.system_info:
                     self.text_display.insert("0.0", "System Information:\n")
@@ -607,6 +641,7 @@ class PCInfoApp(ctk.CTk):
                         self.update_idletasks()
                 else:
                     self.text_display.insert("0.0", "Loading hardware information...")
+                self.text_display.configure(state="disabled")  # Disable editing again
         except Exception as e:
             logger.error(f"Error updating system info display: {e}")
 
@@ -614,6 +649,7 @@ class PCInfoApp(ctk.CTk):
     def display_complete_system_info(self):
         try:
             if hasattr(self, 'text_display') and not self.system_info_displayed:
+                self.text_display.configure(state="normal")  # Enable editing temporarily
                 self.text_display.delete("0.0", "end")  # Clear previous content
                 
                 # Display system information
@@ -631,6 +667,7 @@ class PCInfoApp(ctk.CTk):
                 else:
                     self.text_display.insert("end", "\nGPU Information not available\n")
                 
+                self.text_display.configure(state="disabled")  # Disable editing again
                 self.system_info_displayed = True
                 self.update_idletasks()
         except Exception as e:
@@ -640,6 +677,8 @@ class PCInfoApp(ctk.CTk):
     def update_system_info_only(self):
         try:
             if hasattr(self, 'text_display') and hasattr(self, 'system_info') and self.system_info_displayed:
+                self.text_display.configure(state="normal")  # Enable editing temporarily
+                
                 # Find and update only the system information part
                 current_content = self.text_display.get("0.0", "end")
                 
@@ -666,6 +705,7 @@ class PCInfoApp(ctk.CTk):
                 
                 self.text_display.delete("0.0", "end")
                 self.text_display.insert("0.0", new_content)
+                self.text_display.configure(state="disabled")  # Disable editing again
                 self.update_idletasks()
         except Exception as e:
             logger.error(f"Error updating system info only: {e}")
@@ -674,11 +714,13 @@ class PCInfoApp(ctk.CTk):
     def display_gpu_info(self):
         try:
             if hasattr(self, 'text_display') and hasattr(self, 'gpu_info'):
+                self.text_display.configure(state="normal")  # Enable editing temporarily
                 if self.gpu_info:
                     self.text_display.insert("end", "\nGPU Information:\n")
                     self.text_display.insert("end", self.gpu_info)
                 else:
                     self.text_display.insert("end", "\nGPU Information not available\n")
+                self.text_display.configure(state="disabled")  # Disable editing again
                 # Small yield to keep UI responsive
                 self.update_idletasks()
         except Exception as e:
@@ -830,7 +872,9 @@ class PCInfoApp(ctk.CTk):
 
     # Clear the text display
     def clear_text_display(self):
+        self.text_display.configure(state="normal")  # Enable editing temporarily
         self.text_display.delete("0.0", "end")
+        self.text_display.configure(state="disabled")  # Disable editing again
     
     # Handle window closing event
     def on_close(self):
