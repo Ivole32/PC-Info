@@ -1,3 +1,4 @@
 Log
 build
-pc_info.egg-info
+pc_informations.egg-info 
+__pycache__

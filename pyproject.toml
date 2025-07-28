@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pc-info"
-version = "1.0.0"
+name = "pc-informations"
+version = "1.0.2"
 description = "A PC info tool for displaying system information and managing processes"
 authors = [{ name = "Ivole32", email = "ivo.theis@posteo.de" }]
 readme = "README.md"
@@ -42,7 +42,7 @@ Repository = "https://github.com/Ivole32/PC-Info"
 Issues = "https://github.com/Ivole32/PC-Info/issues"
 
 [project.scripts]
-pc-info = "pc_info:main"
+pc_info = "pc_info:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
