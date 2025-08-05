@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pc-informations"
-version = "1.0.4"
+version = "1.0.6"
 description = "A PC info tool for displaying system information and managing processes"
 authors = [{ name = "Ivole32", email = "ivo.theis@posteo.de" }]
 readme = "README.md"
@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 license = "MIT"
 keywords = ["system", "info", "monitoring", "processes", "pc"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: End Users/Desktop",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
@@ -42,11 +42,10 @@ Repository = "https://github.com/Ivole32/PC-Info"
 Issues = "https://github.com/Ivole32/PC-Info/issues"
 
 [project.scripts]
-pc_info = "pc_info:main"
+pc_info = "pc_informations.pc_info:main"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["pc_info*"]
+[tool.setuptools]
+packages = ["pc_informations"]
 
 [tool.setuptools.package-data]
 pc_info = ["*.png", "*.ico"]

@@ -9,6 +9,6 @@ Documentation: [here](https://github.com/Ivole32/PC-Info/wiki)
 
 Quick installation: <br>
 Run: ```pip install pc-informations``` <br>
-Run: ```python -m pc_info``` or ```python3 -m pc_info```
+Run: ```pc_info```
 
 </div>
